@@ -3,14 +3,28 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 
+import org.apache.hadoop.hbase.util.Bytes;
+
 import org.apache.hadoop.hbase.HBaseConfiguration;
 
-import org.apache.hadoop.hbase.client.Get;
+// HBaseAdmin
+import org.apache.hadoop.hbase.client.HBaseAdmin;
+import org.apache.hadoop.hbase.MasterNotRunningException;
+import org.apache.hadoop.hbase.ClusterStatus;
+import org.apache.hadoop.hbase.HServerInfo;
+import org.apache.hadoop.hbase.HServerLoad;
+import org.apache.hadoop.hbase.HServerLoad.RegionLoad;
+
+// HTable
 import org.apache.hadoop.hbase.client.HTable;
+
+import org.apache.hadoop.hbase.client.Delete;
+import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.client.Scan;
+
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
-import org.apache.hadoop.hbase.client.Scan;
 
 import org.apache.hadoop.hbase.filter.Filter;
 import org.apache.hadoop.hbase.filter.FilterList;
@@ -20,98 +34,98 @@ import org.apache.hadoop.hbase.filter.BinaryComparator;
 import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.filter.FilterList.Operator;
 
-import org.apache.hadoop.hbase.util.Bytes;
-
-// Class that has nothing but a main.
-// Does a Put, Get and a Scan against an hbase table.
 public class JBase {
     public static void main(String[] args) throws IOException {
-	// You need a configuration object to tell the client where to connect.
-	// When you create a HBaseConfiguration, it reads in whatever you've set
-	// into your hbase-site.xml and in hbase-default.xml, as long as these can
-	// be found on the CLASSPATH
+	// CONFIGURATION
 	HBaseConfiguration config = new HBaseConfiguration();
 
-	// This instantiates an HTable object that connects you to
-	// the "myLittleHBaseTable" table.
+	// ENSURE RUNNING
+	try {
+	    HBaseAdmin.checkHBaseAvailable(config);
+	} catch (MasterNotRunningException e) {
+	    System.out.println("HBase is not running!");
+	    System.exit(1);
+	}
+	System.out.println("HBase is running!");
+
+	// ADMIN
+	HBaseAdmin admin = new HBaseAdmin(config);
+
+	// CLUSTER STATUS
+	ClusterStatus cluster = admin.getClusterStatus();
+	System.out.println("HBase version: " + cluster.getHBaseVersion());
+	System.out.println("Number of servers: " + cluster.getServers());
+	System.out.println("Number of regions: " + cluster.getRegionsCount());
+
+	// SERVER LOAD
+	for (HServerInfo si : cluster.getServerInfo()) {
+	    System.out.println("Server statistics for " + si.getServerName());
+	    HServerLoad sl = si.getLoad();
+	    System.out.println("  Load: " + sl);
+	    for (RegionLoad rl : sl.getRegionsLoad()) {
+		System.out.println("  Region " + rl.getNameAsString() + " Load: " + rl);
+	    }
+	}
+
+	// USER
 	HTable table = new HTable(config, "t1");
+	System.out.println("Connected to table: " + Bytes.toString(table.getTableName()));
 
-	// To add to a row, use Put.  A Put constructor takes the name of the row
-	// you want to insert into as a byte array.  In HBase, the Bytes class has
-	// utility for converting all kinds of java types to byte arrays.  In the
-	// below, we are converting the String "myLittleRow" into a byte array to
-	// use as a row key for our update. Once you have a Put instance, you can
-	// adorn it by setting the names of columns you want to update on the row,
-	// the timestamp to use in your update, etc.If no timestamp, the server
-	// applies current time to the edits.
+	// PUT
 	Put p = new Put(Bytes.toBytes("r1"));
-
-	// To set the value you'd like to update in the row 'myLittleRow', specify
-	// the column family, column qualifier, and value of the table cell you'd
-	// like to update.  The column family must already exist in your table
-	// schema.  The qualifier can be anything.  All must be specified as byte
-	// arrays as hbase is all about byte arrays.  Lets pretend the table
-	// 'myLittleHBaseTable' was created with a family 'myLittleFamily'.
-	p.add(Bytes.toBytes("cf1"), Bytes.toBytes("c3"),
-	      Bytes.toBytes("fromtheclient"));
-
-	// Once you've adorned your Put instance with all the updates you want to
-	// make, to commit it do the following (The HTable#put method takes the
-	// Put instance you've been building and pushes the changes you made into
-	// hbase)
+	p.add(Bytes.toBytes("cf1"), Bytes.toBytes("c3"), Bytes.toBytes("fromtheclient"));
 	table.put(p);
 
-	// Now, to retrieve the data we just wrote. The values that come back are
-	// Result instances. Generally, a Result is an object that will package up
-	// the hbase return into the form you find most palatable.
+	// GET
 	Get g = new Get(Bytes.toBytes("r1"));
 	Result r = table.get(g);
 	byte [] value = r.getValue(Bytes.toBytes("cf1"),
 				   Bytes.toBytes("c3"));
-	// If we convert the value bytes, we should get back 'Some Value', the
-	// value we inserted at this location.
 	String valueStr = Bytes.toString(value);
-	System.out.println("GET: " + valueStr);
+	System.out.println("Get r1 cf1:c3: " + valueStr);
 
-	// Sometimes, you won't know the row you're looking for. In this case, you
-	// use a Scanner. This will give you cursor-like interface to the contents
-	// of the table.  To set up a Scanner, do like you did above making a Put
-	// and a Get, create a Scan.  Adorn it with column names, etc.
+	// SCAN
 	Scan s = new Scan();
 	s.addColumn(Bytes.toBytes("cf1"), Bytes.toBytes("c1"));
 	ResultScanner scanner = table.getScanner(s);
 	try {
-	    // Scanners return Result instances.
-	    // Now, for the actual iteration. One way is to use a while loop like so:
-	    for (Result rr = scanner.next(); rr != null; rr = scanner.next()) {
-		// print out the row we found and the columns we were looking for
-		System.out.println("Found row: " + rr);
+	    for (Result rr : scanner) {
+	        System.out.println("Scan found row: " + rr);
 	    }
-
-	    // The other approach is to use a foreach loop. Scanners are iterable!
-	    // for (Result rr : scanner) {
-	    //   System.out.println("Found row: " + rr);
-	    // }
 	} finally {
-	    // Make sure you close your scanners when you are done!
-	    // Thats why we have it inside a try/finally clause
 	    scanner.close();
 	}
 
-        // Using Filters
+        // DELETE
+	Put p2 = new Put(Bytes.toBytes("lame duck"));
+	p2.add(Bytes.toBytes("cf1"), Bytes.toBytes("c1"),
+               Bytes.toBytes("not for long"));
+	table.put(p2);
+	Get g2 = new Get(Bytes.toBytes("lame duck"));
+	Result r2 = table.get(g2);
+	byte [] value2 = r2.getValue(Bytes.toBytes("cf1"),
+         			   Bytes.toBytes("c1"));
+	String valueStr2 = Bytes.toString(value2);
+	System.out.println("Row we're going to delete: " + valueStr2);
+	Delete d = new Delete(Bytes.toBytes("lame duck"));
+	table.delete(d);
+	Get g3 = new Get(Bytes.toBytes("lame duck"));
+	Result r3 = table.get(g3);
+	byte [] value3 = r3.getValue(Bytes.toBytes("cf1"),
+                                    Bytes.toBytes("c1"));
+	String valueStr3 = Bytes.toString(value3);
+	System.out.println("Row value after deletion: " + valueStr3);
+
+        // FILTERS
         Filter f1 = new PrefixFilter(Bytes.toBytes("r"));
         Filter f2 = new QualifierFilter(CompareOp.GREATER_OR_EQUAL, new BinaryComparator(Bytes.toBytes("c2")));
         List<Filter> fs = Arrays.asList(f1, f2);
         Filter f3 = new FilterList(Operator.MUST_PASS_ALL, fs);
-
         Scan s2 = new Scan();
-
-        //s2.setFilter(f1);
-        //s2.setFilter(f2);
-        s2.setFilter(f3);
-
+        s2.setFilter(f3); // could also do f1 or f2 to show that those work too
 	ResultScanner scanner2 = table.getScanner(s2);
         try {
+	    // TODO(hammer): Figure out how to write a Writable to System.out
 	    for (Result rr : scanner2) {
 		System.out.println("Filter " + s2.getFilter() +  " matched row: " + rr);
 	    }
@@ -119,5 +133,7 @@ public class JBase {
 	    scanner2.close();
 	}
 
-    } // main()
-} // Class
+	// DISCONNECT
+	table.close();
+    }
+}
