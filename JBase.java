@@ -1,6 +1,7 @@
 import java.io.IOException;
 
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 
 import org.apache.hadoop.hbase.util.Bytes;
@@ -14,6 +15,9 @@ import org.apache.hadoop.hbase.ClusterStatus;
 import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.HServerLoad;
 import org.apache.hadoop.hbase.HServerLoad.RegionLoad;
+import org.apache.hadoop.hbase.HTableDescriptor;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.HColumnDescriptor;
 
 // HTable
 import org.apache.hadoop.hbase.client.HTable;
@@ -54,6 +58,7 @@ public class JBase {
 	// CLUSTER STATUS
 	ClusterStatus cluster = admin.getClusterStatus();
 	System.out.println("HBase version: " + cluster.getHBaseVersion());
+	System.out.println("HTableDescriptor version: " + HTableDescriptor.TABLE_DESCRIPTOR_VERSION);
 	System.out.println("Number of servers: " + cluster.getServers());
 	System.out.println("Number of regions: " + cluster.getRegionsCount());
 
@@ -67,9 +72,49 @@ public class JBase {
 	    }
 	}
 
+	// TODO(hammer): use commons.io to get human-readable byte counts
+	// TABLES
+	Path hbaseRootDir = new Path(config.get("hbase.rootdir"));
+	HTableDescriptor[] tables = admin.listTables();
+	HTableDescriptor[] allTables = Arrays.copyOf(tables, tables.length + 2);
+	allTables[allTables.length - 2] = HTableDescriptor.META_TABLEDESC;
+	allTables[allTables.length - 1] = HTableDescriptor.ROOT_TABLEDESC;
+	for (HTableDescriptor t : Arrays.asList(allTables)) {
+	    System.out.println("Information about table " + t.getNameAsString());
+	    System.out.println("  Stored at " + t.getTableDir(hbaseRootDir, t.getName()));
+	    System.out.println("  MemStore flush size: " + t.getMemStoreFlushSize());
+	    System.out.println("  Maximum store file size: " + t.getMaxFileSize());
+	    Collection<HColumnDescriptor> cfs = t.getFamilies();
+	    System.out.println("  Number of Column Families: " + cfs.size());
+
+	    // COLUMN FAMILIES
+	    for (HColumnDescriptor c : cfs) {
+		System.out.println("  Information about column family " + c.getNameAsString());
+		System.out.println("    HDFS block size: " + c.getBlocksize());
+		System.out.println("    Compression: " + c.getCompression());
+		System.out.println("    Max Versions: " + c.getMaxVersions());
+		System.out.println("    TTL: " + c.getTimeToLive());
+		System.out.println("    Block Cache: " + c.isBlockCacheEnabled());
+		System.out.println("    Bloom Filters: " + c.isBloomfilter());
+		System.out.println("    In Memory: " + c.isInMemory());
+	    }
+
+	    // REGIONS
+	    // Would use HTable.getRegionsInfo() to get this information,
+	    // but trying to use only HBaseAdmin here
+	}
+
+	// SPLITS
+	//	admin.split("t1");
+
+	// COMPACTIONS
+	//	admin.flush("t1"); // send memtable to disk; async
+	//	admin.compact("t1"); // best effort aggregation of some store files and removal of deleted cells
+	//	admin.majorCompact("t1"); // complete aggregation of all store files and removal of all deleted cells
+
 	// USER
 	HTable table = new HTable(config, "t1");
-	System.out.println("Connected to table: " + Bytes.toString(table.getTableName()));
+	System.out.println("\n\nConnected to table: " + Bytes.toString(table.getTableName()));
 
 	// PUT
 	Put p = new Put(Bytes.toBytes("r1"));
